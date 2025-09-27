@@ -1,0 +1,21 @@
+# Enhanced PDF RAG QA System - Requirements
+# Core packages (required)
+PyMuPDF>=1.23.0
+sentence-transformers>=2.2.0
+faiss-cpu>=1.7.0
+transformers>=4.30.0
+torch>=2.0.0
+requests>=2.28.0
+numpy>=1.21.0
+
+# Enhanced generation capabilities (optional but recommended)
+openai>=1.0.0
+langchain>=0.1.0
+
+# Additional utilities
+python-dotenv>=1.0.0
+
+# Minimal Local LLM Requirements (add to your existing file)
+accelerate>=0.20.0
+tokenizers>=0.13.0
+safetensors>=0.3.0
