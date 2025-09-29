@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+
 """
-Enhanced PDF RAG QA System with PROPERLY Fixed Similarity Calculations
-Now uses cosine similarity index instead of inner product for better normalization
+Enhanced PDF RAG QA System (Properly Fixed Version)
+Za najveći model treba 8 min za odgovor.
 """
 
 import os
@@ -46,21 +46,19 @@ except ImportError:
     HAS_LANGCHAIN = False
     print("INFO: LangChain not available - using direct transformers")
 
-class PDFRagQA:
-    """
-    Enhanced PDF Document Question-Answering system with PROPERLY fixed similarity calculations.
-    """
 
-    def __init__(self, embedding_model: str = "all-MiniLM-L6-v2",
-                 chunk_size: int = 400, overlap_size: int = 50,
-                 generation_mode: str = "auto"):
+class PDFRagQA:
+    """Enhanced PDF Document Question-Answering system with optional user rating."""
+
+    def __init__(self, embedding_model: str = "all-MiniLM-L6-v2", chunk_size: int = 400, 
+                 overlap_size: int = 50, generation_mode: str = "auto"):
         """Initialize the Enhanced PDF RAG QA system."""
         self.embedding_model_name = embedding_model
         self.chunk_size = chunk_size
         self.overlap_size = overlap_size
         self.generation_mode = generation_mode
 
-        # Initialize components
+        # Core components
         self.embedding_model = None
         self.segments = []
         self.embeddings = None
@@ -70,7 +68,11 @@ class PDFRagQA:
         self.current_model = None
         self.document_metadata = {}
 
-        # Generation settings
+        # User rating system - DISABLED BY DEFAULT
+        self.answer_ratings = []
+        self.rating_enabled = False  # CHANGED: Default to False
+
+        # Configuration
         self.openai_model = "gpt-3.5-turbo"
 
         print("Initializing Enhanced PDF RAG QA System...")
@@ -82,7 +84,7 @@ class PDFRagQA:
             print(f"Loading embedding model: {self.embedding_model_name}")
             self.embedding_model = SentenceTransformer(self.embedding_model_name)
 
-            # Load generation models based on mode
+            # Generation settings
             if self.generation_mode in ["local", "auto", "hybrid"]:
                 self._load_local_generator()
 
@@ -97,127 +99,108 @@ class PDFRagQA:
 
     def _load_local_generator(self):
         """Enhanced selective local LLM loading with interactive model selection."""
-
-        # ENHANCED CONTROL PANEL - More models with better organization
+        # Load generation models based on mode
         available_models = {
-            # Fast & Lightweight Models
             "distilgpt2": {
-                "name": "DistilGPT2",
-                "size": "328MB",
+                "name": "DistilGPT-2", 
+                "size": "328MB", 
                 "description": "Fastest responses, good for quick questions",
                 "category": "Fast",
-                "enabled": True  # Default enabled for speed
+                "enabled": True
             },
             "microsoft/DialoGPT-small": {
                 "name": "DialoGPT Small",
-                "size": "117MB",
+                "size": "117MB", 
                 "description": "Lightest model, basic conversations",
-                "category": "Fast", 
-                "enabled": True  # Enabled for low-resource systems
+                "category": "Fast",
+                "enabled": True
             },
-
-            # Balanced Models
             "gpt2": {
                 "name": "GPT-2",
                 "size": "548MB",
-                "description": "Balanced quality and speed, general purpose",
+                "description": "Balanced quality and speed, general purpose", 
                 "category": "Balanced",
-                "enabled": True  # User can enable if wanted
+                "enabled": True
             },
             "microsoft/DialoGPT-medium": {
                 "name": "DialoGPT Medium",
                 "size": "355MB",
                 "description": "Good balance of quality and performance",
-                "category": "Balanced",
-                "enabled": True  # User can enable if wanted
+                "category": "Balanced", 
+                "enabled": False
             },
-
-            # High-Quality Models
             "microsoft/DialoGPT-large": {
                 "name": "DialoGPT Large",
                 "size": "1.1GB",
                 "description": "Best conversational quality, slower",
                 "category": "Quality",
-                "enabled": False  # User can enable for quality
-            },
+                "enabled": True
+            }
         }
 
-        # Show available models to user
-        print("\nAvailable Local LLM Models:")
-        print("=" * 50)
+        print("\nLocal LLM Models")
+        print("-" * 50)
         for category in ["Fast", "Balanced", "Quality"]:
-            print(f"\n{category} Models:")
+            print(f"{category} Models:")
             for model_id, config in available_models.items():
                 if config["category"] == category:
-                    status = "ENABLED" if config["enabled"] else "DISABLED"
-                    print(f"  {model_id}:")
+                    status = "ENABLED" if config["enabled"] else "DISABLED" 
+                    print(f"  {model_id}")
                     print(f"    Name: {config['name']} ({config['size']})")
                     print(f"    Description: {config['description']}")
                     print(f"    Status: {status}")
 
-        # Only tries models with enabled: True
         enabled_models = [model_id for model_id, config in available_models.items() if config["enabled"]]
 
         if not enabled_models:
-            print("\nERROR: No models enabled in configuration")
+            print("\nNo models enabled in configuration")
             print("INFO: Edit the 'enabled' field in available_models to enable models")
             self.local_generator = None
             self.available_models = {}
             return
 
-        print(f"\nLoading {len(enabled_models)} selected models...")
+        print(f"\n{len(enabled_models)} selected models...")
 
         loaded_models = {}
-
         for model_id in enabled_models:
             config = available_models[model_id]
-
             try:
                 print(f"Loading {config['name']} ({config['size']})...")
-
                 generator = pipeline(
                     "text-generation",
                     model=model_id,
                     device=-1,  # CPU only
-                    max_length=1000,
                     do_sample=True,
                     temperature=0.7,
                     top_p=0.9,
                     pad_token_id=50256,
-                    truncation=True
+                    truncation=True,
+                    return_full_text=False  # IMPORTANT: Only return generated part
                 )
 
-                # Test the model
-                test_result = generator("Test:", max_length=20, do_sample=False)
-
+                test_result = generator("Test", max_new_tokens=10, do_sample=False)
                 if test_result:
-                    loaded_models[model_id] = {
-                        "generator": generator,
-                        "config": config
-                    }
+                    loaded_models[model_id] = {"generator": generator, "config": config}
                     print(f"SUCCESS: {config['name']} loaded successfully!")
 
             except Exception as e:
                 print(f"WARNING: {config['name']} failed to load: {str(e)[:100]}")
 
         if loaded_models:
-            # Use first successful model as default
             default_model = list(loaded_models.keys())[0]
-            self.local_generator = loaded_models[default_model]["generator"]
+            self.local_generator = loaded_models[default_model]["generator"]  
             self.current_model = default_model
             self.available_models = loaded_models
 
-            print(f"\nDefault model: {loaded_models[default_model]['config']['name']}")
+            print(f"\nUsing model: {loaded_models[default_model]['config']['name']}")
             print(f"SUCCESS: {len(loaded_models)} models available for selection")
 
-            # Show available models for switching
             if len(loaded_models) > 1:
                 print("\nYou can switch between these models during runtime:")
                 for i, (model_id, model_data) in enumerate(loaded_models.items(), 1):
                     current_marker = " (CURRENT)" if model_id == default_model else ""
                     print(f"  {i}. {model_data['config']['name']}{current_marker}")
                 print("Use 'model <name>' command to switch during conversation")
-
         else:
             print("ERROR: No local LLM models could be loaded")
             self.local_generator = None
@@ -229,25 +212,22 @@ class PDFRagQA:
             print("ERROR: No local models available")
             return False
 
-        # Try to match by exact model ID first
         if model_identifier in self.available_models:
             self.local_generator = self.available_models[model_identifier]["generator"]
             self.current_model = model_identifier
             model_name = self.available_models[model_identifier]["config"]["name"]
-            print(f"SUCCESS: Switched to: {model_name}")
+            print(f"SUCCESS: Switched to {model_name}")
             return True
 
-        # Try to match by name (case-insensitive)
         model_identifier_lower = model_identifier.lower()
         for model_id, model_data in self.available_models.items():
             model_name_lower = model_data["config"]["name"].lower()
             if model_identifier_lower in model_name_lower or model_name_lower in model_identifier_lower:
                 self.local_generator = model_data["generator"]
                 self.current_model = model_id
-                print(f"SUCCESS: Switched to: {model_data['config']['name']}")
+                print(f"SUCCESS: Switched to {model_data['config']['name']}")
                 return True
 
-        # Try to match by number (1, 2, 3, etc.)
         try:
             model_index = int(model_identifier) - 1
             model_list = list(self.available_models.keys())
@@ -256,12 +236,11 @@ class PDFRagQA:
                 self.local_generator = self.available_models[selected_model_id]["generator"]
                 self.current_model = selected_model_id
                 model_name = self.available_models[selected_model_id]["config"]["name"]
-                print(f"SUCCESS: Switched to: {model_name}")
+                print(f"SUCCESS: Switched to {model_name}")
                 return True
         except ValueError:
             pass
 
-        # If no match found, show available options
         print(f"ERROR: Model '{model_identifier}' not available")
         self.show_available_models()
         return False
@@ -272,13 +251,11 @@ class PDFRagQA:
             print("No local models available")
             return
 
-        print("\nAvailable Local Models:")
-        print("=" * 40)
-
+        print("\nLocal Models")
+        print("-" * 40)
         for i, (model_id, model_data) in enumerate(self.available_models.items(), 1):
             config = model_data["config"]
-            current_marker = " <- CURRENT" if model_id == self.current_model else ""
-
+            current_marker = " - CURRENT" if model_id == self.current_model else ""
             print(f"{i}. {config['name']} ({config['size']}){current_marker}")
             print(f"   ID: {model_id}")
             print(f"   Description: {config['description']}")
@@ -286,26 +263,10 @@ class PDFRagQA:
             print()
 
         print("To switch models, use any of these commands:")
-        print("  'model 1' (by number)")
-        print("  'model distilgpt2' (by ID)")
-        print("  'model DistilGPT2' (by name)")
-        print("  'model dialo' (partial name match)")
-
-    def get_available_models(self):
-        """Get enhanced list of available local models for UI."""
-        if not hasattr(self, 'available_models') or not self.available_models:
-            return {}
-
-        return {
-            model_id: {
-                "name": config["config"]["name"],
-                "description": config["config"]["description"],
-                "size": config["config"]["size"],
-                "category": config["config"]["category"],
-                "current": model_id == getattr(self, 'current_model', None)
-            }
-            for model_id, config in self.available_models.items()
-        }
+        print("• model 1 (by number)")
+        print("• model distilgpt2 (by ID)")
+        print("• model DistilGPT2 (by name)")
+        print("• model dialo (partial name match)")
 
     def _check_openai_availability(self):
         """Check if OpenAI API is available and configured."""
@@ -313,9 +274,9 @@ class PDFRagQA:
             print("WARNING: OpenAI library not installed")
             return False
 
-        api_key = os.getenv('OPENAI_API_KEY')
+        api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            print("WARNING: OPENAI_API_KEY not found in environment variables")
+            print("WARNING: OPENAI_API_KEY not found in environment variables") 
             print("INFO: Set your API key: export OPENAI_API_KEY='your-key-here'")
             return False
 
@@ -336,7 +297,6 @@ class PDFRagQA:
         try:
             print(f"Loading PDF: {pdf_path}")
 
-            # Extract text from PDF
             text_data = self._extract_pdf_text(pdf_path)
             if not text_data:
                 print("ERROR: No text extracted from PDF")
@@ -344,15 +304,12 @@ class PDFRagQA:
 
             print(f"Extracted {len(text_data)} pages")
 
-            # Create segments
             self.segments = self._create_segments(text_data)
             print(f"Created {len(self.segments)} text segments")
 
-            # Build vector index
             self._build_vector_index()
             print("Vector index built successfully!")
 
-            # Store metadata
             self.document_metadata = {
                 "path": pdf_path,
                 "filename": os.path.basename(pdf_path),
@@ -384,20 +341,23 @@ class PDFRagQA:
             doc.close()
         except Exception as e:
             print(f"ERROR: Error extracting PDF text: {e}")
+
         return text_data
 
     def _clean_text(self, text: str) -> str:
         """Clean and normalize text."""
         text = re.sub(r'\s+', ' ', text)
-        text = re.sub(r'[\f\r\v]', ' ', text)
-        text = re.sub(r'[""''`]', '"', text)
+        text = re.sub(r'\n+', '\n', text) 
+        text = re.sub(r'\t+', ' ', text)
+
         lines = text.split('\n')
         cleaned_lines = []
         for line in lines:
             line = line.strip()
-            if len(line) > 5 and not re.match(r'^\d+$', line):
+            if len(line) > 5 and not re.match(r'^\s*$', line):
                 cleaned_lines.append(line)
-        return ' '.join(cleaned_lines)
+
+        return '\n'.join(cleaned_lines)
 
     def _create_segments(self, text_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Create text segments with overlap."""
@@ -406,7 +366,7 @@ class PDFRagQA:
 
         for page_data in text_data:
             page_num = page_data["page_number"]
-            text = page_data["text"]
+            text = page_data["text"] 
             words = text.split()
 
             start = 0
@@ -417,44 +377,37 @@ class PDFRagQA:
                 segments.append({
                     "id": segment_id,
                     "text": segment_text,
-                    "page_number": page_num,
+                    "page_number": page_num, 
                     "start_word": start,
                     "end_word": end,
                     "word_count": len(segment_text.split())
                 })
 
                 segment_id += 1
+
                 if end >= len(words):
                     break
-                start += (self.chunk_size - self.overlap_size)
+
+                start += self.chunk_size - self.overlap_size
 
         return segments
 
     def _build_vector_index(self):
-        """FIXED: Build FAISS vector index with proper cosine similarity."""
+        """Build FAISS vector index with proper cosine similarity."""
         if not self.segments:
             print("ERROR: No segments to index")
             return
 
         print("Creating embeddings...")
         texts = [segment["text"] for segment in self.segments]
-        self.embeddings = self.embedding_model.encode(
-            texts,
-            show_progress_bar=True,
-            convert_to_numpy=True
-        )
+        self.embeddings = self.embedding_model.encode(texts, show_progress_bar=True, convert_to_numpy=True)
 
         dimension = self.embeddings.shape[1]
 
-        # FIX: Use IndexFlatL2 for proper cosine similarity
-        # We'll normalize embeddings and use L2 distance, then convert to cosine similarity
         self.faiss_index = faiss.IndexFlatL2(dimension)
 
-        # Normalize embeddings for cosine similarity calculation
         faiss.normalize_L2(self.embeddings)
         self.faiss_index.add(self.embeddings)
-
-        print(f"Index built with {len(self.segments)} segments using cosine similarity")
 
     def ask_question(self, question: str, top_k: int = 3) -> Dict[str, Any]:
         """Ask a question with enhanced answer generation."""
@@ -463,46 +416,41 @@ class PDFRagQA:
                 "answer": "ERROR: No document loaded. Please load a PDF first.",
                 "sources": [],
                 "confidence": 0.0,
-                "generation_method": "none"
+                "generation_method": "none",
+                "question": question
             }
 
         print(f"Processing question: {question}")
 
-        # Show current model being used
-        if self.current_model and self.available_models:
-            current_model_name = self.available_models[self.current_model]["config"]["name"]
-            print(f"Using model: {current_model_name}")
-
         try:
-            # Find relevant segments
             relevant_segments = self._search_relevant_segments(question, top_k)
-
             if not relevant_segments:
                 return {
                     "answer": "ERROR: No relevant content found for this question.",
                     "sources": [],
                     "confidence": 0.0,
-                    "generation_method": "none"
+                    "generation_method": "none",
+                    "question": question
                 }
 
-            # Generate intelligent answer
             answer_data = self._generate_intelligent_answer(question, relevant_segments)
+            answer_data["question"] = question
             return answer_data
 
         except Exception as e:
             return {
                 "answer": f"ERROR: Error processing question: {e}",
                 "sources": [],
-                "confidence": 0.0,
-                "generation_method": "error"
+                "confidence": 0.0, 
+                "generation_method": "error",
+                "question": question
             }
 
     def _search_relevant_segments(self, question: str, top_k: int) -> List[Tuple[Dict, float]]:
-        """PROPERLY FIXED: Search for relevant segments with correct cosine similarity."""
+        """Search for relevant segments with correct cosine similarity."""
         question_embedding = self.embedding_model.encode([question], convert_to_numpy=True)
         faiss.normalize_L2(question_embedding)
 
-        # Search using L2 distance (on normalized vectors = cosine similarity)
         distances, indices = self.faiss_index.search(question_embedding, top_k)
 
         relevant_segments = []
@@ -510,22 +458,9 @@ class PDFRagQA:
             if idx < len(self.segments):
                 segment = self.segments[idx]
 
-                # PROPER FIX: Convert L2 distance to cosine similarity
-                # For normalized vectors: cosine_similarity = 1 - (L2_distance^2 / 2)
-                # But since FAISS L2 on normalized vectors gives squared distance,
-                # we need: cosine_similarity = 1 - (distance / 2)
-
                 distance = float(distance)
-
-                # Convert L2 squared distance to cosine similarity [0, 1]
-                # L2 distance on normalized vectors ranges from 0 to 2
-                # Cosine similarity = 1 - (distance / 2)
                 cosine_similarity = 1.0 - (distance / 2.0)
-
-                # Clamp to [0, 1] range to handle numerical precision
                 cosine_similarity = max(0.0, min(1.0, cosine_similarity))
-
-                # Convert to percentage [0, 100]
                 similarity_percent = cosine_similarity * 100.0
 
                 relevant_segments.append((segment, similarity_percent))
@@ -534,28 +469,24 @@ class PDFRagQA:
 
     def _generate_intelligent_answer(self, question: str, relevant_segments: List[Tuple[Dict, float]]) -> Dict[str, Any]:
         """Generate intelligent answer with proper confidence calculation."""
-        # Prepare context
         context_parts = []
         sources = []
 
         for segment, similarity in relevant_segments:
-            context_parts.append(f"[Page {segment['page_number']}] {segment['text']}")
+            context_parts.append(f"Page {segment['page_number']}: {segment['text']}")
             sources.append({
-                "page": segment['page_number'],
-                "segment_id": segment['id'],
-                "similarity": similarity,  # Now properly normalized 0-100
-                "text_preview": segment['text'][:100] + "..." if len(segment['text']) > 100 else segment['text']
+                "page": segment["page_number"],
+                "segment_id": segment["id"], 
+                "similarity": similarity,
+                "text_preview": segment["text"][:100] + "..." if len(segment["text"]) > 100 else segment["text"]
             })
 
-        context = "\n\n".join(context_parts)
+        context = '\n'.join(context_parts)
 
-        # Try different generation methods in order of preference
         answer, method = self._try_generation_methods(question, context)
 
-        # Calculate confidence properly (0-1 range)
         if relevant_segments:
             avg_confidence = sum(sim for _, sim in relevant_segments) / len(relevant_segments)
-            # Convert from 0-100 scale to 0-1 scale for confidence
             avg_confidence = avg_confidence / 100.0
         else:
             avg_confidence = 0.0
@@ -570,8 +501,6 @@ class PDFRagQA:
 
     def _try_generation_methods(self, question: str, context: str) -> Tuple[str, str]:
         """Try different generation methods in order of preference."""
-
-        # Method 1: OpenAI API (best quality)
         if self.generation_mode in ["openai", "auto", "hybrid"] and HAS_OPENAI:
             try:
                 answer = self._generate_with_openai(question, context)
@@ -580,30 +509,27 @@ class PDFRagQA:
             except Exception as e:
                 print(f"WARNING: OpenAI generation failed: {e}")
 
-        # Method 2: Local LLM (good quality, private)
         if self.generation_mode in ["local", "auto", "hybrid"] and self.local_generator:
             try:
                 answer = self._generate_with_local_llm(question, context)
                 if answer:
                     current_model_name = self.available_models[self.current_model]["config"]["name"]
-                    return answer, f"local_llm ({current_model_name})"
+                    return answer, f"local_llm_{current_model_name}"
             except Exception as e:
                 print(f"WARNING: Local LLM generation failed: {e}")
 
-        # Method 3: Enhanced rule-based (reliable fallback)
         try:
             answer = self._generate_enhanced_answer(question, context)
             return answer, "enhanced_rules"
         except Exception as e:
             print(f"WARNING: Enhanced generation failed: {e}")
 
-        # Method 4: Basic fallback
         answer = self._generate_basic_answer(question, context)
         return answer, "basic"
 
     def _generate_with_openai(self, question: str, context: str) -> str:
         """Generate answer using OpenAI API."""
-        if not HAS_OPENAI or not os.getenv('OPENAI_API_KEY'):
+        if not HAS_OPENAI or not os.getenv("OPENAI_API_KEY"):
             return None
 
         system_prompt = """You are an expert document analyst. Answer questions based STRICTLY on the provided document context.
@@ -614,7 +540,7 @@ INSTRUCTIONS:
 3. If the context doesn't contain the answer, say "The document doesn't contain information about this"
 4. Use specific details and evidence from the document
 5. Organize your response clearly with bullet points or paragraphs as needed
-6. Quote relevant parts when helpful
+6. Quote relevant parts when helpful  
 7. Be concise but thorough"""
 
         user_prompt = f"""DOCUMENT CONTEXT:
@@ -635,130 +561,325 @@ Please provide a comprehensive answer based on the document context above."""
                 temperature=0.3,
                 top_p=1.0
             )
-
             return response.choices[0].message.content.strip()
-
         except Exception as e:
             print(f"WARNING: OpenAI API error: {e}")
             return None
 
     def _generate_with_local_llm(self, question: str, context: str) -> str:
-        """Generate answer using local LLM."""
+        """Generate answer using local LLM with PROPERLY FIXED generation."""
         if not self.local_generator:
             return None
 
-        # Create a focused prompt for the local model
-        prompt = f"""Context: {context[:800]}...
+        # IMPROVED: Better prompt structure to prevent loops
+        prompt = f"""Based on this document context, answer the question directly and stop.
+
+Context: {context[:600]}
 
 Question: {question}
 
-Based on the context above, provide a clear and helpful answer:"""
+Answer:"""
 
         try:
-            # Generate response
+            # FIXED: Proper generation settings to prevent loops
             outputs = self.local_generator(
                 prompt,
-                max_length=len(prompt.split()) + 150,
+                max_new_tokens=100,          # Shorter to prevent loops
                 num_return_sequences=1,
-                temperature=0.7,
+                temperature=0.2,             # Lower temperature for more focused answers
                 do_sample=True,
-                pad_token_id=50256
+                top_k=50,                    # Add top_k to constrain generation
+                top_p=0.85,                  # Lower top_p for more focused responses
+                pad_token_id=50256,
+                eos_token_id=50256,          # Ensure proper ending
+                repetition_penalty=1.2       # Prevent repetition
             )
 
-            # Extract the generated text after the prompt
-            full_response = outputs[0]['generated_text']
-            answer = full_response[len(prompt):].strip()
+            # Extract only the generated part (return_full_text=False should handle this)
+            if outputs and len(outputs) > 0:
+                generated_text = outputs[0]["generated_text"]
 
-            # Clean up the response
-            answer = self._clean_generated_text(answer)
-            return answer if answer else None
+                # Additional cleanup to prevent loops
+                answer = self._clean_generated_text(generated_text)
+
+                # If still empty or repetitive, use fallback
+                if not answer or len(answer.split()) < 3:
+                    return self._generate_enhanced_answer(question, context)
+
+                return answer
+
+            return None
 
         except Exception as e:
             print(f"WARNING: Local LLM error: {e}")
             return None
 
     def _clean_generated_text(self, text: str) -> str:
-        """Clean generated text from artifacts."""
-        # Remove common generation artifacts
+        """IMPROVED: Clean generated text from artifacts and loops."""
+        if not text:
+            return ""
+
+        # Remove excessive repetition
+        words = text.split()
+        if len(words) > 10:
+            # Check for repetitive patterns
+            unique_words = []
+            for word in words:
+                if word not in unique_words[-5:]:  # Don't repeat words from last 5
+                    unique_words.append(word)
+                else:
+                    break  # Stop at first repetition
+            text = ' '.join(unique_words)
+
+        # Clean up formatting
         text = re.sub(r'\n+', ' ', text)
         text = re.sub(r'\s+', ' ', text)
+        text = text.strip()
 
-        # Remove repetitive patterns
-        sentences = text.split('.')
-        unique_sentences = []
-        for sentence in sentences:
+        # Remove common artifacts
+        text = re.sub(r'Answer based on.*?:', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'Question:.*?Answer:', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'Context:.*?Question:', '', text, flags=re.IGNORECASE)
+
+        # Limit to first few sentences to prevent rambling
+        sentences = re.split(r'[.!?]+', text)
+        clean_sentences = []
+        for sentence in sentences[:3]:  # Max 3 sentences
             sentence = sentence.strip()
-            if sentence and sentence not in unique_sentences:
-                unique_sentences.append(sentence)
+            if len(sentence) > 10:  # Only substantial sentences
+                clean_sentences.append(sentence)
 
-        return '. '.join(unique_sentences[:3]) + '.' if unique_sentences else text
+        if clean_sentences:
+            return '. '.join(clean_sentences) + '.'
+        else:
+            return text[:200] + '...' if len(text) > 200 else text
 
     def _generate_enhanced_answer(self, question: str, context: str) -> str:
         """Generate enhanced answer using advanced rule-based approach."""
-        return f"Based on the document:\n\n{context[:500]}...\n\nThis information addresses your question."
+        # Extract key information from context
+        context_words = context.lower().split()
+        question_words = question.lower().split()
+
+        # Find overlap and relevant parts
+        relevant_parts = []
+        context_sentences = context.split('.')
+
+        for sentence in context_sentences[:3]:  # First 3 sentences
+            sentence = sentence.strip()
+            if len(sentence) > 20:
+                sentence_words = sentence.lower().split()
+                overlap = set(question_words) & set(sentence_words)
+                if len(overlap) > 1:  # At least 2 word overlap
+                    relevant_parts.append(sentence)
+
+        if relevant_parts:
+            return f"Based on the document: {'. '.join(relevant_parts[:2])}."
+        else:
+            return f"The document mentions: {context[:200]}..."
 
     def _generate_basic_answer(self, question: str, context: str) -> str:
         """Basic fallback answer generation."""
-        return f"From the document:\n\n{context[:400]}..."
+        return f"According to the document: {context[:300]}..."
+
+    # USER RATING FUNCTIONALITY (PROPERLY OPTIONAL)
+    def get_user_rating(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Get user rating for the answer - ONLY if rating is enabled."""
+        if not self.rating_enabled:
+            return result
+
+        print("\n" + "="*50)
+        print("ANSWER RATING (Optional - Press Enter to skip)")
+        print("="*50)
+        print("Please rate this answer:")
+        print("1 - Very Poor (Completely irrelevant)")
+        print("2 - Poor (Mostly irrelevant)")  
+        print("3 - Average (Somewhat helpful)")
+        print("4 - Good (Helpful and relevant)")
+        print("5 - Excellent (Perfect answer)")
+        print("Enter - Skip rating")
+
+        while True:
+            try:
+                rating_input = input("\nYour rating (1-5 or Enter to skip): ").strip()
+
+                if not rating_input:  # Empty input = skip
+                    print("Rating skipped.")
+                    return result
+
+                rating = int(rating_input)
+                if 1 <= rating <= 5:
+                    break
+                else:
+                    print("Please enter a number between 1 and 5, or press Enter to skip.")
+            except ValueError:
+                print("Please enter a valid number (1-5) or press Enter to skip.")
+
+        # Optional comment
+        comment = input("Optional comment (press Enter to skip): ").strip()
+
+        # Store rating
+        rating_data = {
+            "question": result.get("question", ""),
+            "answer": result.get("answer", ""),
+            "rating": rating,
+            "comment": comment,
+            "generation_method": result.get("generation_method", ""),
+            "confidence": result.get("confidence", 0.0),
+            "timestamp": __import__('datetime').datetime.now().isoformat()
+        }
+
+        self.answer_ratings.append(rating_data)
+
+        # Provide feedback
+        rating_labels = {
+            1: "Very Poor",
+            2: "Poor", 
+            3: "Average",
+            4: "Good",
+            5: "Excellent"
+        }
+
+        print(f"\nThank you! You rated this answer: {rating}/5 ({rating_labels[rating]})")
+        if comment:
+            print(f"Your comment: {comment}")
+
+        result["user_rating"] = rating_data
+        return result
+
+    def show_rating_statistics(self):
+        """Show rating statistics."""
+        if not self.answer_ratings:
+            print("No ratings available yet.")
+            print("Use 'rating' command to enable rating system.")
+            return
+
+        ratings = [r["rating"] for r in self.answer_ratings]
+        avg_rating = sum(ratings) / len(ratings)
+
+        print("\n" + "="*50)
+        print("RATING STATISTICS")
+        print("="*50)
+        print(f"Total rated answers: {len(self.answer_ratings)}")
+        print(f"Average rating: {avg_rating:.2f}/5")
+
+        # Rating distribution
+        print("\nRating distribution:")
+        for i in range(1, 6):
+            count = ratings.count(i)
+            percentage = (count / len(ratings)) * 100 if ratings else 0
+            print(f"  {i} stars: {count} ({percentage:.1f}%)")
+
+        # By generation method
+        methods = {}
+        for rating_data in self.answer_ratings:
+            method = rating_data["generation_method"]
+            if method not in methods:
+                methods[method] = []
+            methods[method].append(rating_data["rating"])
+
+        if methods:
+            print("\nBy generation method:")
+            for method, method_ratings in methods.items():
+                avg_method = sum(method_ratings) / len(method_ratings)
+                print(f"  {method}: {avg_method:.2f}/5 ({len(method_ratings)} answers)")
+
+        # Recent comments
+        recent_comments = [r for r in self.answer_ratings[-5:] if r["comment"]]
+        if recent_comments:
+            print("\nRecent comments:")
+            for comment_data in recent_comments:
+                print(f"  Rating {comment_data['rating']}/5: {comment_data['comment'][:80]}...")
+
+    def toggle_rating(self):
+        """Toggle user rating on/off."""
+        self.rating_enabled = not self.rating_enabled
+        status = "enabled" if self.rating_enabled else "disabled"
+        print(f"User rating system {status}.")
+        if self.rating_enabled:
+            print("You will be prompted to rate answers after each response.")
+        else:
+            print("Rating prompts are disabled. Use 'ratings' to see existing statistics.")
 
     def get_document_info(self) -> Dict[str, Any]:
         """Get information about the loaded document."""
         info = self.document_metadata.copy()
         info["generation_capabilities"] = {
-            "openai_available": HAS_OPENAI and os.getenv('OPENAI_API_KEY') is not None,
+            "openai_available": HAS_OPENAI and os.getenv("OPENAI_API_KEY") is not None,
             "local_llm_loaded": self.local_generator is not None,
             "current_model": self.current_model,
             "available_models": len(self.available_models) if hasattr(self, 'available_models') else 0,
             "generation_mode": self.generation_mode
         }
+        info["rating_system"] = {
+            "enabled": self.rating_enabled,
+            "total_ratings": len(self.answer_ratings),
+            "average_rating": sum(r["rating"] for r in self.answer_ratings) / len(self.answer_ratings) if self.answer_ratings else 0
+        }
         return info
 
     def set_generation_mode(self, mode: str):
-        """Change generation mode: 'local', 'openai', 'auto', or 'hybrid'."""
+        """Change generation mode ('local', 'openai', 'auto', or 'hybrid')."""
         valid_modes = ["local", "openai", "auto", "hybrid"]
         if mode in valid_modes:
             self.generation_mode = mode
-            print(f"SUCCESS: Generation mode set to: {mode}")
+            print(f"SUCCESS: Generation mode set to '{mode}'")
         else:
             print(f"ERROR: Invalid mode. Choose from: {valid_modes}")
 
-    def handle_command(self, command: str) -> bool:
+    def _handle_command(self, command: str) -> bool:
         """Handle special commands. Returns True if command was processed."""
         command = command.strip().lower()
 
-        if command == 'models':
+        if command == "models":
             self.show_available_models()
             return True
 
-        if command.startswith('model '):
+        if command.startswith("model "):
             model_identifier = command.split(' ', 1)[1].strip()
             self.set_local_model(model_identifier)
             return True
 
-        if command.startswith('mode '):
-            new_mode = command.split(' ', 1)[1].strip()
+        if command.startswith("mode "):
+            new_mode = command.split(' ', 1)[1].strip()  
             self.set_generation_mode(new_mode)
             return True
 
-        if command == 'info':
+        if command == "info":
             info = self.get_document_info()
-            print(f"\nSystem Information:")
+            print("\nDocument Information:")
             for key, value in info.items():
-                if key != 'generation_capabilities':
-                    print(f" {key}: {value}")
+                if key not in ["generation_capabilities", "rating_system"]:
+                    print(f"  {key}: {value}")
 
-            gen_info = info.get('generation_capabilities', {})
-            print(f"\nAI Capabilities:")
-            print(f" OpenAI Available: {'YES' if gen_info.get('openai_available') else 'NO'}")
-            print(f" Local LLM Loaded: {'YES' if gen_info.get('local_llm_loaded') else 'NO'}")
-            print(f" Available Models: {gen_info.get('available_models', 0)}")
-            if gen_info.get('current_model') and hasattr(self, 'available_models'):
-                current_model_name = self.available_models[gen_info['current_model']]["config"]["name"]
-                print(f" Current Model: {current_model_name}")
-            print(f" Generation Mode: {gen_info.get('generation_mode', 'basic')}")
+            gen_info = info.get("generation_capabilities", {})
+            print("\nGeneration Capabilities:")
+            print(f"  OpenAI Available: {'YES' if gen_info.get('openai_available') else 'NO'}")
+            print(f"  Local LLM Loaded: {'YES' if gen_info.get('local_llm_loaded') else 'NO'}")
+            print(f"  Available Models: {gen_info.get('available_models', 0)}")
+
+            if gen_info.get("current_model") and hasattr(self, 'available_models'):
+                current_model_name = self.available_models[gen_info["current_model"]]["config"]["name"]
+                print(f"  Current Model: {current_model_name}")
+
+            print(f"  Generation Mode: {gen_info.get('generation_mode', 'basic')}")
+
+            rating_info = info.get("rating_system", {})
+            print("\nRating System:")
+            print(f"  Rating Enabled: {'YES' if rating_info.get('enabled') else 'NO'}")
+            print(f"  Total Ratings: {rating_info.get('total_ratings', 0)}")
+            if rating_info.get('total_ratings', 0) > 0:
+                print(f"  Average Rating: {rating_info.get('average_rating', 0):.2f}/5")
             return True
 
-        if command == 'help':
+        if command == "ratings":
+            self.show_rating_statistics()
+            return True
+
+        if command == "rating":
+            self.toggle_rating()
+            return True
+
+        if command == "help":
             self.show_help()
             return True
 
@@ -766,123 +887,123 @@ Based on the context above, provide a clear and helpful answer:"""
 
     def show_help(self):
         """Show help information."""
-        print("\nAvailable Commands:")
-        print("=" * 30)
-        print("models                    - Show available local models")
-        print("model <name/number>       - Switch to specific model")
-        print("mode <mode>              - Change generation mode (local/openai/auto)")
-        print("info                     - Show system and document information")
-        print("help                     - Show this help message")
-        print("quit/exit/q              - Exit the system")
-        print("\nOr just ask questions about your document!")
+        print("\nCommands")
+        print("-" * 30)
+        print("models - Show available local models")
+        print("model <name/number> - Switch to specific model") 
+        print("mode <mode> - Change generation mode (local/openai/auto)")
+        print("info - Show system and document information")
+        print("rating - Toggle user rating on/off (currently: {})".format("ON" if self.rating_enabled else "OFF"))
+        print("ratings - Show rating statistics")
+        print("help - Show this help message")
+        print("quit/exit/q - Exit the system")
+        print("\n...just ask questions about your document!")
 
     def interactive_mode(self):
-        """Enhanced interactive Q&A mode with proper model selection."""
-        print("\n" + "="*60)
+        """Enhanced interactive QA mode with properly optional user rating."""
+        print("-" * 60)
         print("Enhanced PDF RAG QA System - Interactive Mode")
-        print("="*60)
+        print("-" * 60)
+        print("NOTE: User rating is DISABLED by default. Use 'rating' command to enable.")
 
-        # Show available commands before asking for PDF
-        print("\nAvailable commands:")
-        print(" - Type a PDF file path to load a document")
-        print(" - Type 'models' to see available local models")
-        print(" - Type 'model <name/number>' to switch models")
-        print(" - Type 'mode <mode>' to change generation mode")  
-        print(" - Type 'info' to see system information")
-        print(" - Type 'help' for full command list")
-        print(" - Type 'quit', 'exit', or 'q' to end the session")
-
-        # Main interactive loop
         while True:
             try:
                 if not self.segments:
-                    user_input = input("\nEnter PDF file path (or command): ").strip()
+                    user_input = input("\nPDF file path (or command): ").strip()
                 else:
-                    user_input = input(f"\nQuestion or command: ").strip()
+                    user_input = input("\nQuestion (or command): ").strip()
 
                 if not user_input:
                     continue
 
-                # Check for exit commands
-                if user_input.lower() in ['quit', 'exit', 'q']:
+                if user_input.lower() in ["quit", "exit", "q"]:
                     print("\nThank you for using Enhanced PDF RAG QA System!")
+                    if self.answer_ratings:
+                        print(f"You provided {len(self.answer_ratings)} ratings during this session.")
+                        avg = sum(r["rating"] for r in self.answer_ratings) / len(self.answer_ratings)
+                        print(f"Average rating: {avg:.2f}/5")
                     break
 
-                # Try to handle as command first
-                if self.handle_command(user_input):
+                if self._handle_command(user_input):
                     continue
 
-                # If no document loaded and not a command, try to load as PDF
-                if not self.segments:
-                    # Check if it looks like a file path
-                    if os.path.exists(user_input.strip('"')):
-                        pdf_path = user_input.strip('"')
-                        if self.load_document(pdf_path):
-                            # Display document info after successful load
-                            info = self.get_document_info()
-                            print(f"\nDocument Info:")
-                            print(f" File: {info.get('filename', 'Unknown')}")
-                            print(f" Pages: {info.get('pages', 0)}")
-                            print(f" Segments: {info.get('segments', 0)}")
+                if self.segments:
+                    print("\nProcessing question and generating response...")
+                    result = self.ask_question(user_input)
 
-                            gen_info = info.get('generation_capabilities', {})
-                            print(f"\nAI Capabilities:")
-                            print(f" OpenAI Available: {'YES' if gen_info.get('openai_available') else 'NO'}")
-                            print(f" Local LLM Loaded: {'YES' if gen_info.get('local_llm_loaded') else 'NO'}")
-                            print(f" Available Models: {gen_info.get('available_models', 0)}")
-                            if gen_info.get('current_model'):
-                                current_model_name = self.available_models[gen_info['current_model']]["config"]["name"]
-                                print(f" Current Model: {current_model_name}")
-                            print(f" Generation Mode: {gen_info.get('generation_mode', 'basic')}")
+                    print("\n" + "-" * 50)
+                    print(f"ANSWER ({result.get('generation_method', 'unknown').upper()}):")
+                    print("-" * 50) 
+                    print(result["answer"])
+                    print("-" * 50)
 
-                            print("\nYou can now ask questions about the document!")
-                            print("Or use commands like 'models', 'model <name>', etc.")
-                        else:
-                            print("ERROR: Failed to load PDF. Try another file or use commands.")
+                    # Get user rating ONLY if enabled
+                    if self.rating_enabled:
+                        result = self.get_user_rating(result)
+
+                elif os.path.exists(user_input.strip()):
+                    pdf_path = user_input.strip()
+                    if self.load_document(pdf_path):
+                        info = self.get_document_info()
+                        print(f"\nDocument Info:")
+                        print(f"  File: {info.get('filename', 'Unknown')}")
+                        print(f"  Pages: {info.get('pages', 0)}")
+                        print(f"  Segments: {info.get('segments', 0)}")
+
+                        gen_info = info.get("generation_capabilities", {})
+                        print(f"\nCapabilities:")
+                        print(f"  OpenAI Available: {'YES' if gen_info.get('openai_available') else 'NO'}")
+                        print(f"  Local LLM Loaded: {'YES' if gen_info.get('local_llm_loaded') else 'NO'}")
+                        print(f"  Available Models: {gen_info.get('available_models', 0)}")
+
+                        if gen_info.get("current_model"):
+                            current_model_name = self.available_models[gen_info["current_model"]]["config"]["name"]
+                            print(f"  Current Model: {current_model_name}")
+
+                        print(f"  Generation Mode: {gen_info.get('generation_mode', 'basic')}")
+
+                        rating_info = info.get("rating_system", {})
+                        print(f"  User Rating: {'Enabled' if rating_info.get('enabled') else 'Disabled'}")
+
+                        print("\nYou can now ask questions about the document!")
+                        print("Commands: 'models', 'rating', 'ratings', 'help'")
                     else:
-                        print(f"ERROR: File not found: {user_input}")
-                        print("Try entering a valid PDF file path, or use commands like 'models' or 'help'")
-                    continue
+                        print("ERROR: Failed to load PDF. Try another file or use commands.")
 
-                # If document is loaded, treat as question
-                print("\nAnalyzing question and generating response...")
-                result = self.ask_question(user_input)
-
-                # Display results
-                print("\n" + "="*50)
-                print(f"ANSWER ({result.get('generation_method', 'unknown').upper()}):")
-                print("="*50)
-                print(result["answer"])
-
-                if result["sources"]:
-                    print(f"\nSources (Confidence: {result['confidence']:.2%}):")
-                    for i, source in enumerate(result["sources"], 1):
-                        print(f" {i}. Page {source['page']} (similarity: {source['similarity']:.2%})")
-                        print(f"    Preview: {source['text_preview']}")
-
-                print(f"\nGenerated using: {result.get('generation_method', 'unknown')} method")
-                print("\n" + "-"*50)
+                else:
+                    print(f"ERROR: File not found: {user_input}")
+                    print("Try entering a valid PDF file path, or use commands like 'models' or 'help'")
 
             except KeyboardInterrupt:
-                print("\n\nSession interrupted. Goodbye!")
+                print("\n\nGoodbye!")
                 break
             except Exception as e:
-                print(f"\nERROR: {e}")
+                print(f"Error: {e}")
                 continue
 
+
 def main():
-    """Main application entry point."""
+    """Main application entry point."""  
     print("Starting Enhanced PDF RAG QA System...")
 
-    # Initialize system with auto mode (tries best available option)
+    print("\nCommands:")
+    print("- Type a PDF file path to load a document")
+    print("- Type 'models' to see available local models")
+    print("- Type 'model <name/number>' to switch models")
+    print("- Type 'mode <mode>' to change generation mode")
+    print("- Type 'rating' to toggle user rating on/off")
+    print("- Type 'ratings' to see rating statistics")
+    print("- Type 'info' to see system information")
+    print("- Type 'help' for full command list")
+    print("- Type 'quit', 'exit', or 'q' to end the session")
+
     qa_system = PDFRagQA(
         embedding_model="all-MiniLM-L6-v2",
         chunk_size=400,
         overlap_size=50,
-        generation_mode="auto"  # Will use best available option
+        generation_mode="auto"
     )
 
-    # Check for command line arguments
     if len(sys.argv) > 1:
         pdf_path = sys.argv[1]
         print(f"Loading PDF from command line: {pdf_path}")
@@ -892,6 +1013,7 @@ def main():
             print("ERROR: Failed to load PDF from command line")
     else:
         qa_system.interactive_mode()
+
 
 if __name__ == "__main__":
     main()
